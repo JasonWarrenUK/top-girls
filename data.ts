@@ -17,6 +17,13 @@ export interface CharacterCard {
   /** Signature colour for the generated avatar. */
   hex: string;
   s: StatLine;
+  /**
+   * Optional portrait image path override. If absent, the component will first
+   * attempt /cards/{slug}.jpg (derived from the character name), then fall back
+   * to the generated SVG avatar. Use this field only when the filename cannot
+   * follow the slug convention (e.g. a .png, or an external URL).
+   */
+  img?: string;
 }
 
 /**

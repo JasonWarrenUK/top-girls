@@ -1,5 +1,27 @@
 import type { CharacterCard } from "./data";
 
+/**
+ * Filename-safe slug from a character name.
+ * e.g. "Sookie St. James" → "sookie-st-james"
+ *      "Sebastian 'Digger' Stiles" → "sebastian-digger-stiles"
+ */
+export function slug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/['".]/g, "")          // strip apostrophes, quotes, full stops
+    .replace(/[^a-z0-9]+/g, "-")    // any non-alphanumeric run → single hyphen
+    .replace(/^-+|-+$/g, "");       // trim leading/trailing hyphens
+}
+
+/**
+ * Resolve a card's portrait image URL.
+ * Explicit card.img wins; otherwise the slug convention path is tried first
+ * (the caller handles the 404 with an onerror fallback to the SVG avatar).
+ */
+export function imageSrc(card: CharacterCard): string {
+  return card.img ?? `/cards/${slug(card.name)}.jpg`;
+}
+
 /** Two-letter initials from a character name. */
 export function initials(name: string): string {
   const parts = name.replace(/['".]/g, "").split(/\s+/).filter(Boolean);
