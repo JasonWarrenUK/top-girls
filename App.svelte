@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Game from "./lib/Game.svelte";
-  import Gallery from "./lib/Gallery.svelte";
+  import Game from "./Game.svelte";
+  import Gallery from "./Gallery.svelte";
 
   type Tab = "play" | "gallery";
 
