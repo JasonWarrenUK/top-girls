@@ -6,3 +6,4 @@ dist/
 # they are gitignored so no assets are ever committed to the repo.
 public/cards/*
 !public/cards/.gitkeep
+.vercel
