@@ -57,16 +57,19 @@
     text-align: center;
   }
   .title {
-    font-size: clamp(28px, 6vw, 48px);
-    letter-spacing: 0.5px;
+    font-family: var(--font-display, "Alfa Slab One", serif);
+    font-size: clamp(28px, 6vw, 52px);
+    font-weight: 400; /* Alfa Slab One has only one weight */
+    letter-spacing: 1px;
     margin: 0;
-    font-weight: 700;
+    color: var(--ink);
   }
   .sub {
     margin: 6px 0 0;
     font-style: italic;
-    opacity: 0.7;
+    opacity: 0.65;
     font-size: 15px;
+    font-family: var(--font-body, "DM Sans", sans-serif);
   }
 
   .tabs {
@@ -79,7 +82,7 @@
     background: transparent;
     border: 1px solid var(--rule);
     color: var(--ink);
-    font-family: inherit;
+    font-family: var(--font-body, inherit);
     font-size: 15px;
     padding: 8px 18px;
     cursor: pointer;

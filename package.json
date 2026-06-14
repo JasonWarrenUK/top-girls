@@ -19,6 +19,7 @@
     "vite": "^6.0.11"
   },
   "dependencies": {
+    "atropos": "^2.0.2",
     "motion-sv": "^0.1.12"
   }
 }

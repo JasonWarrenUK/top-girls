@@ -1,8 +1,20 @@
 :root {
-  --paper: #f3ead7;
-  --ink: #2b2118;
-  --rule: #cdbfa0;
+  /* ── Core palette ─────────────────────────────────────────────────────── */
+  --paper:  #f3ead7;
+  --ink:    #2b2118;
+  --rule:   #cdbfa0;
   --coffee: #9a5d2a;
+
+  /* ── Diner accents ────────────────────────────────────────────────────── */
+  --diner-red:   #b5302a;  /* enamel-mug red rim */
+  --diner-teal:  #3a7a72;  /* diner-booth vinyl teal */
+  --diner-cream: #f7f0e0;  /* enamel-mug cream body */
+
+  /* ── Typography ───────────────────────────────────────────────────────── */
+  /* Display: chunky diner signage for titles and card names */
+  --font-display: "Alfa Slab One", "Rockwell", Georgia, serif;
+  /* Body: clean, readable for stat rows and UI chrome */
+  --font-body:    "DM Sans", "Helvetica Neue", Arial, sans-serif;
 }
 
 html,
@@ -14,7 +26,8 @@ body {
 body {
   background: var(--paper);
   color: var(--ink);
-  font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
+  /* Use the body font for general prose; components set display font where needed */
+  font-family: var(--font-body);
 }
 
 #app {
