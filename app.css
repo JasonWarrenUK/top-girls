@@ -1,0 +1,22 @@
+:root {
+  --paper: #f3ead7;
+  --ink: #2b2118;
+  --rule: #cdbfa0;
+  --coffee: #9a5d2a;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
+}
+
+#app {
+  min-height: 100%;
+}
