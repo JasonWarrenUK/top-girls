@@ -55,6 +55,29 @@
 </div>
 
 <style>
+  /* atropos' inner 3D scaffold must not intercept real pointer hits.
+     Nested preserve-3d contexts make the browser's compositor hit-test land on
+     .atropos-scale (which atropos transforms) rather than the card's buttons —
+     even though document.elementFromPoint returns the button correctly (it uses
+     flattened 2D geometry and doesn't model the 3D divergence).
+     Fix: make the three scaffold layers pointer-transparent; restore auto on the
+     direct card child. atropos listens on the outer .atropos element (which keeps
+     pointer-events: auto), and events bubble from the card up to it for tilt. */
+  .card-tilt :global(.atropos-scale),
+  .card-tilt :global(.atropos-rotate),
+  .card-tilt :global(.atropos-inner) {
+    pointer-events: none;
+  }
+  /* Restore events on the card content, but keep the injected glare/shadow
+     overlays inert — they're 200% sized and would otherwise catch all clicks. */
+  .card-tilt :global(.atropos-inner) > :global(*) {
+    pointer-events: auto;
+  }
+  .card-tilt :global(.atropos-highlight),
+  .card-tilt :global(.atropos-shadow) {
+    pointer-events: none;
+  }
+
   /* Override atropos shadow to be warm wood-tinted rather than cold black. */
   .card-tilt :global(.atropos-shadow) {
     background: rgba(60, 30, 10, 0.65);

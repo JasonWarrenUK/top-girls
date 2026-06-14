@@ -121,7 +121,16 @@
     transform: rotateY(180deg);
     border-radius: 10px;
     overflow: hidden;
+    /* The rotated-away back face must not swallow clicks meant for the front.
+       backface-visibility: hidden hides it visually but does NOT prevent
+       hit-testing — so we must explicitly remove pointer events. */
+    pointer-events: none;
   }
+
+  /* When face-down the roles reverse: the front is rotated away; the back
+     is the visible, potentially interactive surface. */
+  .flip-inner.is-down .face.front { pointer-events: none; }
+  .flip-inner.is-down .face.back  { pointer-events: auto; }
 
   .back-frame {
     width: 100%;
