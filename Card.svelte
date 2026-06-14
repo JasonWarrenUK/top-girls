@@ -28,10 +28,6 @@
   Both faces always in the DOM for a true 3D CSS flip.
   .flip-inner rotates 180° when faceDown is true.
   backface-visibility ensures only the forward-facing side shows mid-spin.
-
-  Parallax depth for atropos: elements with data-atropos-offset pop forward/
-  back proportionally when the outer CardTilt wrapper is tilted. Portrait (+10)
-  floats in front; card frame (0/default) stays at the base plane.
 -->
 <div class="flip" style="--accent: {card.hex}">
   <div class="flip-inner" class:is-down={faceDown}>
@@ -51,17 +47,17 @@
     <!-- ── FRONT face ────────────────────────────────────────────────────── -->
     <div class="face front card" aria-hidden={faceDown}>
       <!-- Accent colour banner at the top (like a real Top Trumps series band) -->
-      <div class="banner" data-atropos-offset="2">
+      <div class="banner">
         <span class="card-name">{card.name}</span>
       </div>
 
-      <!-- Portrait — floats forward on tilt via atropos offset -->
-      <div class="portrait" data-atropos-offset="10">
+      <!-- Portrait -->
+      <div class="portrait">
         <Avatar {card} size={148} />
       </div>
 
-      <!-- Stats table — sits at the base plane -->
-      <ul class="stats" data-atropos-offset="0">
+      <!-- Stats table -->
+      <ul class="stats">
         {#each STATS as label, i (label)}
           {@const sel = selectedStat === i || revealStat === i}
           <li class="stat" class:sel>
