@@ -47,10 +47,32 @@ const WS_PORT = 3001;
  *
  * @param roomCode 4-char room code (uppercased before sending).
  * @param role     "host" or "guest".
+ *
+ * URL resolution (in priority order):
+ *  1. VITE_RELAY_URL env var — full origin, e.g. "wss://relay.example.com".
+ *     Set this in Vercel (or any deployed host) to point at the hosted relay.
+ *     It is inlined at build time by Vite, so a redeploy is needed after changes.
+ *  2. LAN dev fallback — same hostname as the page, port 3001, scheme derived
+ *     from the page protocol (ws:// for http:, wss:// for https:) so the
+ *     connection is never mixed-content blocked.
  */
 export function createNet(roomCode: string, role: NetRole): NetHandle {
-	const wsHost = window.location.hostname; // same machine that served the page
-	const url = `ws://${wsHost}:${WS_PORT}?room=${roomCode.toUpperCase()}&role=${role}`;
+	const room = roomCode.toUpperCase();
+	const query = `?room=${room}&role=${role}`;
+
+	// Prefer an explicitly configured relay URL (required for deployed/HTTPS builds).
+	// Env contract: bare origin, no trailing slash, e.g. "wss://top-girls-relay.deno.dev".
+	const configured = import.meta.env.VITE_RELAY_URL as string | undefined;
+
+	let url: string;
+	if (configured && configured.length > 0) {
+		url = `${configured.replace(/\/$/, "")}${query}`;
+	} else {
+		// LAN dev fallback: same host that served the page, port 3001.
+		// Derive ws/wss from the page protocol to avoid mixed-content blocks.
+		const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+		url = `${scheme}://${window.location.hostname}:${WS_PORT}${query}`;
+	}
 
 	const ws = new WebSocket(url);
 
