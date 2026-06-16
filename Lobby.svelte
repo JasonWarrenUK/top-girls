@@ -98,7 +98,7 @@
     const offStatus = handle.onStatus((s) => {
       status = s;
       if (s === "closed" && !gameReady) {
-        errorMsg = "Connection lost. Is the server running?";
+        errorMsg = "Could not reach the game relay. Run \"bun run dev\" to start both the app and the relay.";
       }
     });
 
@@ -173,7 +173,7 @@
     gameReady ? "Ready!" :
     status === "connecting" ? "Connecting…" :
     status === "waiting" ? (mode === "host" ? "Waiting for opponent…" : "Waiting for host…") :
-    status === "closed" ? "Disconnected" : ""
+    status === "closed" ? "Relay offline" : ""
   );
 </script>
 

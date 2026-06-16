@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "bun@1.3.5",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host & bun run server.ts",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
