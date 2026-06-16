@@ -9,6 +9,7 @@
     selectedStat = null,
     revealStat = null,
     interactive = false,
+    foil = false,
     onPickStat,
   }: {
     card: CharacterCard;
@@ -16,6 +17,8 @@
     selectedStat?: number | null;
     revealStat?: number | null;
     interactive?: boolean;
+    /** Show holographic foil shimmer on the front face (reacts to tilt from CardTilt). */
+    foil?: boolean;
     onPickStat?: (i: number) => void;
   } = $props();
 
@@ -78,6 +81,14 @@
 
       <!-- Inner keyline — double-rule frame like a real printed card -->
       <div class="keyline" aria-hidden="true"></div>
+
+      <!-- Holographic foil overlay — reacts to --mx/--my/--active set by CardTilt.
+           Only rendered when foil prop is true. Two stacked blend layers:
+           1. Iridescent sheen (color-dodge) shifts across the card face as it tilts.
+           2. Sparkle grain (overlay) catches light as fine speckle. -->
+      {#if foil}
+        <div class="foil" aria-hidden="true"></div>
+      {/if}
     </div>
 
   </div>
@@ -348,6 +359,61 @@
     z-index: 5;
   }
 
+  /* ── Holographic foil overlay ───────────────────────────────────────────── */
+  /*
+   * Reads --mx, --my (pointer position, 0–1) and --active (0/1) written by
+   * CardTilt.svelte. Falls back to 0.5 / 0 when no CardTilt is present (gallery).
+   *
+   * Two pseudo-elements each with their own mix-blend-mode:
+   *   ::before — warm iridescent sheen, color-dodge → glowing press-through foil.
+   *   ::after  — fine sparkle grain, overlay → speckle-light on the cream surface.
+   *
+   * The .foil element itself is transparent; only its pseudos contribute colour.
+   * Opacity on the pseudos is gated by --active (0 when pointer out, 1 when in).
+   */
+
+  .foil {
+    position: absolute;
+    inset: 0;
+    border-radius: 10px;
+    pointer-events: none;
+    z-index: 6; /* above keyline (5), below grain (10) */
+    overflow: hidden;
+  }
+
+  /* Sheen layer — iridescent warm-gold band that slides with pointer position */
+  .foil::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(
+      105deg,
+      transparent 15%,
+      rgba(245, 217, 140, 0.6) 30%,
+      rgba(255, 248, 220, 0.5) 43%,
+      rgba(232, 180, 138, 0.55) 56%,
+      rgba(210, 155, 90, 0.4) 68%,
+      transparent 83%
+    );
+    background-size: 300% 300%;
+    background-position: calc(var(--mx, 0.5) * 200%) calc(var(--my, 0.5) * 200%);
+    mix-blend-mode: color-dodge;
+    opacity: calc(var(--active, 0) * 0.9);
+    transition: opacity 0.4s ease, background-position 0.05s linear;
+  }
+
+  /* Sparkle layer — fine turbulence noise catches light as tiny speckles */
+  .foil::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='s'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.85' numOctaves='1' seed='42' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23s)' opacity='0.6'/%3E%3C/svg%3E");
+    background-size: 200px 200px;
+    mix-blend-mode: overlay;
+    opacity: calc(var(--active, 0) * 0.4);
+    transition: opacity 0.4s ease;
+  }
+
   /* ── Reduced motion ──────────────────────────────────────────────────────── */
 
   @media (prefers-reduced-motion: reduce) {
@@ -356,6 +422,9 @@
     }
     .row {
       transition: none;
+    }
+    .foil {
+      display: none;
     }
   }
 </style>

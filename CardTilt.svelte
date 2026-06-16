@@ -27,9 +27,30 @@
       shadowScale: 1.05,
     });
 
+    // Track pointer position and expose as CSS custom properties so the foil
+    // overlay in Card.svelte can react to tilt without accessing atropos internals.
+    // --mx / --my are normalised 0–1 from the element's top-left corner.
+    // --active is 1 while the pointer is inside, 0 otherwise.
+    // These listeners are passive and do NOT interact with the existing
+    // pointer-events workaround on the scaffold layers.
+    function onMove(e: PointerEvent) {
+      const rect = el.getBoundingClientRect();
+      el.style.setProperty("--mx", String((e.clientX - rect.left) / rect.width));
+      el.style.setProperty("--my", String((e.clientY - rect.top) / rect.height));
+    }
+    function onEnter() { el.style.setProperty("--active", "1"); }
+    function onLeave() { el.style.setProperty("--active", "0"); }
+
+    el.addEventListener("pointermove", onMove, { passive: true });
+    el.addEventListener("pointerenter", onEnter, { passive: true });
+    el.addEventListener("pointerleave", onLeave, { passive: true });
+
     return () => {
       // Cleanup when the component unmounts (e.g. game over, tab switch).
       instance.destroy();
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerenter", onEnter);
+      el.removeEventListener("pointerleave", onLeave);
     };
   });
 </script>
