@@ -1,16 +1,20 @@
 /**
- * Stars Hollow Top Trumps — LAN WebSocket relay.
+ * Stars Hollow Top Trumps — LAN WebSocket relay (Bun entry point).
  *
  * A dead-simple message broker. Holds NO game state — authority lives in the
  * host browser. The server's only job is to pair two peers into a room and
  * relay messages between them.
  *
- * Usage: bun run server.ts   (or bun run dev:lan for Vite + server together)
+ * The pairing/relay logic lives in relay-core.ts (shared with the Deno entry
+ * and the unit-test suite). This file is a thin Bun.serve adapter.
+ *
+ * Usage: bun run server.ts   (or bun run dev for Vite + server together)
  *
  * Connection URL: ws://<lan-ip>:3001?room=ABCD&role=host|guest
  */
 
 import os from "os";
+import { handleOpen, handleMessage, handleClose, type Role, type Room } from "./relay-core";
 
 const PORT = 3001;
 
@@ -31,39 +35,19 @@ function getLanIp(): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Room management
+// Per-connection data attached to each WebSocket by Bun
 // ---------------------------------------------------------------------------
-
-type Role = "host" | "guest";
-type Peer = { ws: import("bun").ServerWebSocket<ClientData>; role: Role };
 
 interface ClientData {
 	roomCode: string;
 	role: Role;
 }
 
-interface Room {
-	host?: Peer;
-	guest?: Peer;
-}
+// ---------------------------------------------------------------------------
+// Shared room state — passed into every pure handler call
+// ---------------------------------------------------------------------------
 
 const rooms = new Map<string, Room>();
-
-function getOrCreateRoom(code: string): Room {
-	if (!rooms.has(code)) rooms.set(code, {});
-	return rooms.get(code)!;
-}
-
-function peerOf(room: Room, role: Role): Peer | undefined {
-	return role === "host" ? room.guest : room.host;
-}
-
-function broadcast(
-	ws: import("bun").ServerWebSocket<ClientData>,
-	msg: unknown,
-): void {
-	ws.send(JSON.stringify(msg));
-}
 
 // ---------------------------------------------------------------------------
 // Bun WebSocket server
@@ -71,6 +55,7 @@ function broadcast(
 
 const server = Bun.serve<ClientData>({
 	port: PORT,
+
 	fetch(req, server) {
 		const url = new URL(req.url);
 		const room = url.searchParams.get("room")?.toUpperCase().trim();
@@ -87,63 +72,20 @@ const server = Bun.serve<ClientData>({
 
 	websocket: {
 		open(ws) {
-			const { roomCode, role } = ws.data;
-			const room = getOrCreateRoom(roomCode);
-
-			if (role === "host") {
-				if (room.host) {
-					// Another host already in this room — reject.
-					ws.send(JSON.stringify({ type: "error", message: "Room already has a host." }));
-					ws.close();
-					return;
-				}
-				room.host = { ws, role: "host" };
-				console.log(`[room ${roomCode}] host joined`);
-			} else {
-				if (room.guest) {
-					ws.send(JSON.stringify({ type: "error", message: "Room already full." }));
-					ws.close();
-					return;
-				}
-				room.guest = { ws, role: "guest" };
-				console.log(`[room ${roomCode}] guest joined`);
-			}
-
-			// If both peers are present, introduce them.
-			if (room.host && room.guest) {
-				console.log(`[room ${roomCode}] both peers connected — starting game`);
-				broadcast(room.host.ws, { type: "joined", yourSeat: 0 });
-				broadcast(room.guest.ws, { type: "joined", yourSeat: 1 });
-			}
+			handleOpen(rooms, ws.data.roomCode, ws.data.role, ws);
 		},
 
 		message(ws, data) {
-			const { roomCode, role } = ws.data;
-			const room = rooms.get(roomCode);
-			if (!room) return;
-
-			const peer = peerOf(room, role);
-			if (!peer) return; // Other player hasn't joined yet — drop the message.
-
-			// Relay verbatim: host → guest and guest → host.
-			peer.ws.send(typeof data === "string" ? data : JSON.stringify(data));
+			handleMessage(
+				rooms,
+				ws.data.roomCode,
+				ws.data.role,
+				typeof data === "string" ? data : data.toString(),
+			);
 		},
 
 		close(ws) {
-			const { roomCode, role } = ws.data;
-			const room = rooms.get(roomCode);
-			if (!room) return;
-
-			console.log(`[room ${roomCode}] ${role} disconnected`);
-
-			// Notify the surviving peer.
-			const peer = peerOf(room, role);
-			if (peer) {
-				broadcast(peer.ws, { type: "peerLeft" });
-			}
-
-			// Clean up the room entirely.
-			rooms.delete(roomCode);
+			handleClose(rooms, ws.data.roomCode, ws.data.role);
 		},
 	},
 });
