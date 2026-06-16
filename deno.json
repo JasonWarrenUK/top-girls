@@ -1,0 +1,5 @@
+{
+	"tasks": {
+		"relay": "deno run --allow-net relay.deno.ts"
+	}
+}
