@@ -43,6 +43,8 @@
 
   // Once both peers are joined, flip into game mode.
   let gameReady = $state(false);
+  // Set when the opponent disconnects mid-game; forwarded to <Game> as a prop.
+  let peerLeft = $state(false);
   // gameMode is the Game prop — "host" stays "host"; "join" becomes "join" (same string).
   const gameMode: "host" | "join" = initialMode;
 
@@ -115,12 +117,10 @@
       }
 
       if (msg.type === "peerLeft" && gameReady) {
-        // Opponent disconnected mid-game — surface to the user.
-        // We keep gameReady true so the Game component shows a toast via net.
+        // Opponent disconnected mid-game — surface the banner inside <Game>.
+        peerLeft = true;
       }
     });
-
-    handle.onMessage(() => {}); // keep alive
 
     net = handle;
 
@@ -179,7 +179,7 @@
 
 {#if gameReady && net}
   <!-- Both peers joined — render the game -->
-  <Game mode={gameMode} {net} />
+  <Game mode={gameMode} {net} {peerLeft} />
 {:else}
   <div class="lobby">
     {#if mode === "host"}

@@ -21,6 +21,7 @@
   let {
     mode = "cpu",
     net = null,
+    peerLeft = false,
   }: {
     /** "cpu" = single-player vs Stars Hollow AI (default).
      *  "host" = LAN multiplayer host (engine runs here; guest picks arrive via net).
@@ -28,6 +29,8 @@
     mode?: "cpu" | "host" | "join";
     /** Net handle from Lobby.svelte; only used in host/join modes. */
     net?: { send: (msg: unknown) => void; onMessage: (cb: (msg: unknown) => void) => () => void } | null;
+    /** Set by Lobby.svelte when the opponent disconnects mid-game. */
+    peerLeft?: boolean;
   } = $props();
 
   // ---------------------------------------------------------------------------
@@ -87,9 +90,32 @@
           runPick(1, msg.stat as number);
         }
       }
+
+      // Bug 1 fix: guest requested a new game — reset the engine and push fresh state.
+      if (mode === "host" && msg.type === "reset") {
+        reset();
+      }
+
+      // Bug 2 fix: guest announces itself — push current authoritative state so the
+      // guest board appears immediately without waiting for the first pick.
+      if (mode === "host" && msg.type === "hello") {
+        broadcastState();
+      }
     });
 
     return off;
+  });
+
+  // Bug 2 fix: guest sends "hello" once on mount so the host can reply with the
+  // current game state. This is race-free: the host's onMessage listener (above)
+  // is registered inside an $effect that runs on mount, and Svelte runs effects in
+  // component tree order (host mounts first via Lobby's {#if gameReady}). Even if
+  // there were a brief ordering gap, the relay buffers nothing — the hello is sent
+  // after the host's Game mounts on the same "joined" trigger. This handshake beats
+  // a one-shot host broadcast which could arrive before the guest's listener is live.
+  $effect(() => {
+    if (mode !== "join" || !net) return;
+    net.send({ type: "hello" });
   });
 
   // ---------------------------------------------------------------------------
@@ -203,6 +229,10 @@
   <!-- Join mode waiting for first state snapshot -->
   <p class="message">Waiting for the game to start…</p>
 {:else}
+  {#if peerLeft}
+    <p class="message peer-left" aria-live="assertive">Opponent left the game.</p>
+  {/if}
+
   <div class="scoreboard">
     <span>You: {activeView.myHand.length}</span>
     {#if activeView.pot.length > 0}
@@ -262,7 +292,7 @@
 
       <!-- Their side -->
       <div class="side">
-        <span class="side-label">{mode === "cpu" ? "Opponent" : "Opponent"}</span>
+        <span class="side-label">Opponent</span>
         <div class="deck-stack" style="--depth: {theirDepth}">
           {#key activeView.theirTop.id}
             <motion.div
@@ -310,6 +340,15 @@
     font-size: 16px;
     font-style: italic;
     font-family: var(--font-body, inherit);
+  }
+
+  .peer-left {
+    color: var(--diner-red, #b5302a);
+    font-style: normal;
+    font-size: 14px;
+    letter-spacing: 0.3px;
+    min-height: auto;
+    margin-bottom: 4px;
   }
 
   .turn-badge {
