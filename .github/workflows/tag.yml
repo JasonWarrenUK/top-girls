@@ -1,0 +1,83 @@
+name: tag
+
+on:
+  push:
+    branches: [main]
+
+# Only one tag run at a time, processed in merge order.
+# cancel-in-progress: false guarantees the second run sees the first's tag.
+concurrency:
+  group: tag-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # svu needs full commit history
+          fetch-tags: true  # and all existing tags
+
+      - name: Install svu
+        env:
+          SVU_VERSION: 3.4.1
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            "https://github.com/caarlos0/svu/releases/download/v${SVU_VERSION}/svu_${SVU_VERSION}_linux_amd64.tar.gz" \
+            -o /tmp/svu.tar.gz
+          tar -xzf /tmp/svu.tar.gz -C /tmp svu
+          sudo install /tmp/svu /usr/local/bin/svu
+          svu --version
+
+      - name: Compute versions
+        id: ver
+        run: |
+          set -euo pipefail
+          # --tag.mode current: only read tags reachable from main's first-parent
+          # history. Immunises against stray feature-branch tags from parallel PRs.
+          # --v0: treat breaking changes as minor bumps while version is < 1.0.0.
+          # To enter v1 deliberately: git tag v1.0.0 && git push --tags (manual, once).
+          # After that --v0 is a no-op; svu continues computing v1.x.y correctly.
+          CURRENT="$(svu current --tag.mode current)"
+          NEXT="$(svu next    --tag.mode current --v0)"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "next=$NEXT"       >> "$GITHUB_OUTPUT"
+          echo "Current: $CURRENT  ->  Next: $NEXT"
+
+      - name: Sync package.json version
+        # Run BEFORE tagging so the tag points at the commit that carries the
+        # matching version. Commit includes [skip ci] to prevent retriggering
+        # this workflow via the package.json push.
+        if: steps.ver.outputs.next != steps.ver.outputs.current
+        env:
+          NEXT: ${{ steps.ver.outputs.next }}
+        run: |
+          set -euo pipefail
+          VER="${NEXT#v}"   # strip leading v: v0.2.0 -> 0.2.0
+          npm pkg set version="$VER"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore(release): $NEXT [skip ci]"
+          git push origin HEAD:main
+
+      - name: Create and push tag
+        if: steps.ver.outputs.next != steps.ver.outputs.current
+        env:
+          NEXT: ${{ steps.ver.outputs.next }}
+        run: |
+          set -euo pipefail
+          # Idempotent: no-op if the tag already exists (e.g. on a re-run).
+          if git rev-parse "$NEXT" >/dev/null 2>&1; then
+            echo "Tag $NEXT already exists — nothing to do."
+            exit 0
+          fi
+          git tag -a "$NEXT" -m "Release $NEXT"
+          git push origin "$NEXT"
+          echo "Tagged and pushed $NEXT"

@@ -1,0 +1,15 @@
+{
+	"hooks": {
+		"PostToolUse": [
+			{
+				"matcher": "Bash",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "if grep -q 'gh pr create' <<<\"$(jq -r '.tool_input.command // empty')\"; then \"$CLAUDE_PROJECT_DIR/.claude/hooks/proposed-version.sh\"; fi"
+					}
+				]
+			}
+		]
+	}
+}
