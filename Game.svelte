@@ -1,49 +1,59 @@
 <script lang="ts">
   import { motion } from "motion-sv";
-  import { STATS } from "./data";
-  import { dealDecks, type DealtCard, type Decks } from "./deck";
+  import {
+    newGame,
+    topCard,
+    winnerOf,
+    cpuBestStat,
+    applyPick,
+    cleanup,
+    asView,
+    type GameState,
+    type Seat,
+  } from "./game-engine";
   import Card from "./Card.svelte";
   import CardTilt from "./CardTilt.svelte";
 
-  type Phase = "choose" | "reveal";
+  // ---------------------------------------------------------------------------
+  // Props
+  // ---------------------------------------------------------------------------
 
-  let decks = $state<Decks>(dealDecks());
-  let phase = $state<Phase>("choose");
-  let pickedStat = $state<number | null>(null);
-  let pot = $state<Decks["player"]>([]);
-  let message = $state("Your deal. Pick the stat you fancy your chances on.");
+  let {
+    mode = "cpu",
+    net = null,
+  }: {
+    /** "cpu" = single-player vs Stars Hollow AI (default).
+     *  "host" = LAN multiplayer host (engine runs here; guest picks arrive via net).
+     *  "join" = LAN multiplayer guest (thin client; renders state from net). */
+    mode?: "cpu" | "host" | "join";
+    /** Net handle from Lobby.svelte; only used in host/join modes. */
+    net?: { send: (msg: unknown) => void; onMessage: (cb: (msg: unknown) => void) => () => void } | null;
+  } = $props();
 
-  // Whose turn it is to pick the stat. Starts with the player; passes to the
-  // winner after each round. On a draw the chooser stays the same (standard rule).
-  let activeChooser = $state<"player" | "cpu">("player");
+  // ---------------------------------------------------------------------------
+  // Authoritative state (host & cpu modes only; join mode reads remote instead)
+  // ---------------------------------------------------------------------------
 
-  let playerTop = $derived(decks.player[0]);
-  let cpuTop = $derived(decks.cpu[0]);
+  let gameState: GameState = $state(newGame());
 
-  let winner = $derived.by<"player" | "cpu" | null>(() => {
-    if (decks.player.length === 0) return "cpu";
-    if (decks.cpu.length === 0) return "player";
-    return null;
-  });
-  let gameOver = $derived(winner !== null);
+  // Seat 0 = local player in cpu/host modes.
+  // Seat 1 = opponent (CPU or remote guest).
+  const mySeat: Seat = 0;
 
-  // Stack depths capped at 5 for the pseudo-element illusion.
-  let playerDepth = $derived(Math.min(decks.player.length, 5));
-  let cpuDepth = $derived(Math.min(decks.cpu.length, 5));
+  // Derived view for the current seat — the template reads ONLY from this.
+  let view = $derived(asView(gameState, mySeat));
 
-  // --- Reveal snapshot -------------------------------------------------------
-  // During the reveal phase we show the pair that was actually contested, not
-  // the live deck tops. This means that when decks mutate at the 700ms mark the
-  // new top card never flashes face-up — the snapshot stays on screen until we
-  // explicitly flip back to the choose phase and mount the fresh pair.
-  let shownPlayer = $state<DealtCard | null>(null);
-  let shownCpu = $state<DealtCard | null>(null);
+  // ---------------------------------------------------------------------------
+  // Join-mode state (thin client — no engine, no timers)
+  // ---------------------------------------------------------------------------
 
-  // The card rendered on each side: snapshot during reveal, live top otherwise.
-  let displayPlayer = $derived(phase === "reveal" ? shownPlayer : playerTop);
-  let displayCpu = $derived(phase === "reveal" ? shownCpu : cpuTop);
+  let remote: GameState | null = $state(null);
+  let remoteView = $derived(remote ? asView(remote, 1 as Seat) : null);
 
-  // --- timer handles ---------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Timer handles
+  // ---------------------------------------------------------------------------
+
   let revealTimer: ReturnType<typeof setTimeout> | null = null;
   let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -52,197 +62,231 @@
     if (cleanupTimer) clearTimeout(cleanupTimer);
   });
 
-  // --- CPU auto-pick ---------------------------------------------------------
-  function cpuBestStat(card: DealtCard): number {
-    // Pick the column where the CPU's own card is strongest; first index on ties.
-    let best = 0;
-    for (let i = 1; i < card.s.length; i++) {
-      if (card.s[i] > card.s[best]) best = i;
-    }
-    return best;
-  }
+  // ---------------------------------------------------------------------------
+  // Net message handler (host & join modes)
+  // ---------------------------------------------------------------------------
 
   $effect(() => {
-    if (phase !== "choose" || activeChooser !== "cpu" || gameOver || !cpuTop) return;
-    const card = cpuTop;
+    if (!net || mode === "cpu") return;
+
+    const off = net.onMessage((raw: unknown) => {
+      if (!raw || typeof raw !== "object") return;
+      const msg = raw as Record<string, unknown>;
+
+      if (mode === "join" && msg.type === "state") {
+        remote = msg.state as GameState;
+      }
+
+      if (mode === "host" && msg.type === "pickStat") {
+        // Validate before accepting: must be the guest's turn.
+        if (
+          gameState.phase === "choose" &&
+          gameState.activeChooser === 1 &&
+          winnerOf(gameState) === null
+        ) {
+          runPick(1, msg.stat as number);
+        }
+      }
+    });
+
+    return off;
+  });
+
+  // ---------------------------------------------------------------------------
+  // CPU auto-pick (cpu mode only)
+  // ---------------------------------------------------------------------------
+
+  $effect(() => {
+    if (mode !== "cpu") return;
+    if (gameState.phase !== "choose" || gameState.activeChooser !== 1 || winnerOf(gameState) !== null) return;
+
+    const card = topCard(gameState, 1);
+    if (!card) return;
+
     const id = setTimeout(() => {
-      if (phase === "choose" && activeChooser === "cpu" && !gameOver) {
-        pickStat(cpuBestStat(card));
+      if (
+        gameState.phase === "choose" &&
+        gameState.activeChooser === 1 &&
+        winnerOf(gameState) === null
+      ) {
+        runPick(1, cpuBestStat(card));
       }
     }, 800);
+
     return () => clearTimeout(id);
   });
 
   // ---------------------------------------------------------------------------
+  // Core turn driver: runPick + broadcastState
+  // ---------------------------------------------------------------------------
 
-  function pickStat(i: number) {
-    if (phase !== "choose" || !playerTop || !cpuTop) return;
+  /** Broadcast the current authoritative state to the guest (host mode only). */
+  function broadcastState() {
+    if (mode === "host" && net) {
+      net.send({ type: "state", state: gameState });
+    }
+  }
 
-    // Snapshot the contested pair before any deck mutation so we keep showing
-    // these exact cards throughout the reveal window.
-    shownPlayer = playerTop;
-    shownCpu = cpuTop;
+  /**
+   * Apply a stat pick for the given seat.
+   * Used by: the human clicking a stat (seat 0), the CPU $effect (seat 1 in cpu mode),
+   * and the guest's pickStat message (seat 1 in host mode).
+   */
+  function runPick(seat: Seat, statIndex: number) {
+    if (gameState.phase !== "choose" || winnerOf(gameState) !== null) return;
+    if (!topCard(gameState, 0) || !topCard(gameState, 1)) return;
 
-    pickedStat = i;
-    phase = "reveal";
+    const { reveal, resolve } = applyPick(gameState, seat, statIndex);
 
-    const mine = playerTop.s[i];
-    const theirs = cpuTop.s[i];
-    const stake = [playerTop, cpuTop, ...pot];
+    gameState = reveal;
+    broadcastState();
 
     revealTimer = setTimeout(() => {
-      if (mine > theirs) {
-        message = `${STATS[i]}: ${mine} beats ${theirs}. ${activeChooser === "player" ? "You take" : "Stars Hollow takes"} the cards.`;
-        decks = {
-          player: [...decks.player.slice(1), ...stake],
-          cpu: decks.cpu.slice(1),
-        };
-        pot = [];
-        activeChooser = "player";
-      } else if (mine < theirs) {
-        message = `${STATS[i]}: ${theirs} beats ${mine}. ${activeChooser === "cpu" ? "Stars Hollow takes" : "They take"} the cards.`;
-        decks = {
-          player: decks.player.slice(1),
-          cpu: [...decks.cpu.slice(1), ...stake],
-        };
-        pot = [];
-        activeChooser = "cpu";
-      } else {
-        message = `${STATS[i]}: ${mine} all. Cards held over — play again.`;
-        pot = stake;
-        decks = { player: decks.player.slice(1), cpu: decks.cpu.slice(1) };
-        // Draw: chooser unchanged.
-      }
+      gameState = resolve();
+      broadcastState();
 
       cleanupTimer = setTimeout(() => {
-        pickedStat = null;
-        if (!winner) {
-          // Setting phase to "choose" switches displayPlayer/displayCpu from the
-          // snapshot to the live deck tops, which mount already-face-down.
-          // Clear the snapshot AFTER flipping phase so there's no intermediate
-          // frame where displayCpu is null.
-          phase = "choose";
-          shownPlayer = null;
-          shownCpu = null;
-          message =
-            activeChooser === "player"
-              ? "Your turn. Pick a stat."
-              : "Stars Hollow is choosing…";
+        if (winnerOf(gameState) === null) {
+          gameState = cleanup(gameState);
+          broadcastState();
         }
       }, 1400);
     }, 700);
   }
 
+  /** Called when the local human picks a stat (player-card stat buttons). */
+  function onPickStat(i: number) {
+    if (gameState.phase !== "choose" || gameState.activeChooser !== mySeat) return;
+
+    if (mode === "join") {
+      // Guest: send the pick to the host; the host drives the engine.
+      net?.send({ type: "pickStat", stat: i });
+      return;
+    }
+
+    runPick(mySeat, i);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reset
+  // ---------------------------------------------------------------------------
+
   function reset() {
     if (revealTimer) { clearTimeout(revealTimer); revealTimer = null; }
     if (cleanupTimer) { clearTimeout(cleanupTimer); cleanupTimer = null; }
-    decks = dealDecks();
-    phase = "choose";
-    pickedStat = null;
-    pot = [];
-    activeChooser = "player";
-    shownPlayer = null;
-    shownCpu = null;
-    message = "Fresh deal. Pick the stat you fancy your chances on.";
+    gameState = newGame();
+
+    if (mode === "join") {
+      net?.send({ type: "reset" });
+      remote = null;
+    } else {
+      broadcastState();
+    }
   }
 
-  // Spring transition for deal-in (card slides up from below as a new hand appears).
+  // ---------------------------------------------------------------------------
+  // Computed display properties (avoid duplicating logic in template)
+  // ---------------------------------------------------------------------------
+
+  // In join mode, the guest reads remoteView; in cpu/host the local view.
+  let activeView = $derived(mode === "join" ? remoteView : view);
+
+  // Stack depths capped at 5 for the pseudo-element illusion.
+  let myDepth = $derived(Math.min((activeView?.myHand.length ?? 0), 5));
+  let theirDepth = $derived(Math.min((activeView?.theirHand.length ?? 0), 5));
+
+  // Spring transition for deal-in animation.
   const dealTransition = { type: "spring", stiffness: 260, damping: 26 } as const;
 </script>
 
-<div class="scoreboard">
-  <span>You: {decks.player.length}</span>
-  {#if pot.length > 0}
-    <span class="pot">Pot: {pot.length}</span>
-  {/if}
-  <span>Stars Hollow: {decks.cpu.length}</span>
-</div>
-
-<p class="message" aria-live="polite">{message}</p>
-
-{#if phase === "choose"}
-  <div class="turn-badge" class:cpu-turn={activeChooser === "cpu"} aria-hidden="true">
-    {activeChooser === "player" ? "Your call" : "Stars Hollow's call"}
-  </div>
+{#if !activeView}
+  <!-- Join mode waiting for first state snapshot -->
+  <p class="message">Waiting for the game to start…</p>
 {:else}
-  <div class="turn-badge revealing" aria-hidden="true">Revealing…</div>
-{/if}
-
-{#if gameOver}
-  <div class="end">
-    <h2>{winner === "player" ? "You cleaned them out." : "They took the lot."}</h2>
-    <p>
-      {winner === "player"
-        ? "Lorelai would be proud. Coffee's on the house."
-        : "Even Kirk wins sometimes. Rematch?"}
-    </p>
+  <div class="scoreboard">
+    <span>You: {activeView.myHand.length}</span>
+    {#if activeView.pot.length > 0}
+      <span class="pot">Pot: {activeView.pot.length}</span>
+    {/if}
+    <span>{mode === "cpu" ? "Stars Hollow" : "Opponent"}: {activeView.theirHand.length}</span>
   </div>
-{:else if displayPlayer && displayCpu}
-  <div class="table">
-    <!-- Player side -->
-    <div class="side">
-      <span class="side-label">Your card</span>
-      <div class="deck-stack" style="--depth: {playerDepth}">
-        <!--
-          Key on card id during choose phase so a new top card triggers the
-          deal-in spring. During reveal the snapshot card is stable (same id),
-          so no spurious remount occurs.
-        -->
-        {#key displayPlayer.id}
-          <motion.div
-            initial={{ opacity: 0, y: 28 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={dealTransition}
-          >
-            <CardTilt>
+
+  <p class="message" aria-live="polite">{activeView.message}</p>
+
+  {#if activeView.phase === "choose"}
+    <div class="turn-badge" class:cpu-turn={!activeView.iChoose} aria-hidden="true">
+      {activeView.iChoose ? "Your call" : (mode === "cpu" ? "Stars Hollow's call" : "Opponent's call")}
+    </div>
+  {:else}
+    <div class="turn-badge revealing" aria-hidden="true">Revealing…</div>
+  {/if}
+
+  {#if activeView.gameOver}
+    <div class="end">
+      <h2>{activeView.iWon ? "You cleaned them out." : "They took the lot."}</h2>
+      <p>
+        {activeView.iWon
+          ? "Lorelai would be proud. Coffee's on the house."
+          : "Even Kirk wins sometimes. Rematch?"}
+      </p>
+    </div>
+  {:else if activeView.myTop && activeView.theirTop}
+    <div class="table">
+      <!-- My side -->
+      <div class="side">
+        <span class="side-label">Your card</span>
+        <div class="deck-stack" style="--depth: {myDepth}">
+          {#key activeView.myTop.id}
+            <motion.div
+              initial={{ opacity: 0, y: 28 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={dealTransition}
+            >
+              <CardTilt>
+                <Card
+                  card={activeView.myTop}
+                  interactive={activeView.phase === "choose" && activeView.iChoose}
+                  selectedStat={activeView.pickedStat}
+                  revealStat={activeView.phase === "reveal" ? activeView.pickedStat : null}
+                  onPickStat={onPickStat}
+                  foil
+                />
+              </CardTilt>
+            </motion.div>
+          {/key}
+        </div>
+      </div>
+
+      <div class="vs">vs</div>
+
+      <!-- Their side -->
+      <div class="side">
+        <span class="side-label">{mode === "cpu" ? "Opponent" : "Opponent"}</span>
+        <div class="deck-stack" style="--depth: {theirDepth}">
+          {#key activeView.theirTop.id}
+            <motion.div
+              initial={{ opacity: 0, y: 28 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={dealTransition}
+            >
               <Card
-                card={displayPlayer}
-                interactive={phase === "choose" && activeChooser === "player"}
-                selectedStat={pickedStat}
-                revealStat={phase === "reveal" ? pickedStat : null}
-                onPickStat={pickStat}
+                card={activeView.theirTop}
+                faceDown={activeView.phase === "choose"}
+                revealStat={activeView.phase === "reveal" ? activeView.pickedStat : null}
               />
-            </CardTilt>
-          </motion.div>
-        {/key}
+            </motion.div>
+          {/key}
+        </div>
       </div>
     </div>
+  {/if}
 
-    <div class="vs">vs</div>
-
-    <!-- CPU side -->
-    <div class="side">
-      <span class="side-label">Opponent</span>
-      <div class="deck-stack" style="--depth: {cpuDepth}">
-        <!--
-          CPU card is face-down during choose, face-up during reveal (via the
-          snapshot card). Because we never key on cpuTop.id during reveal, the
-          new top card does not mount until phase flips back to choose — at which
-          point it mounts already face-down. No face-up flash.
-        -->
-        {#key displayCpu.id}
-          <motion.div
-            initial={{ opacity: 0, y: 28 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={dealTransition}
-          >
-            <Card
-              card={displayCpu}
-              faceDown={phase === "choose"}
-              revealStat={phase === "reveal" ? pickedStat : null}
-            />
-          </motion.div>
-        {/key}
-      </div>
-    </div>
-  </div>
+  <button class="reset" onclick={reset}>
+    {activeView.gameOver ? "New game" : "Reshuffle & restart"}
+  </button>
 {/if}
-
-<button class="reset" onclick={reset}>
-  {gameOver ? "New game" : "Reshuffle & restart"}
-</button>
 
 <style>
   .scoreboard {
